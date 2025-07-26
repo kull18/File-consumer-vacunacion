@@ -6,22 +6,29 @@ import (
 	"log"
 	"os"
 
+	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
+
+	    err := godotenv.Load()
+    if err != nil {
+        log.Fatalf("Error cargando archivo .env: %v", err)
+    }
     token, errToken := utils.LogConsumer()
 
     if errToken != nil {
         log.Fatalf("Error al generar token: %s", errToken)
     }
+urlRabbit := os.Getenv("URLRabbitMq")
+log.Printf("URL RabbitMQ: %s", urlRabbit)
 
-	urlRabbit := os.Getenv("URLRABBIT")
-	
-	conn, err := amqp.Dial(urlRabbit)
-    if err != nil {
-        log.Fatalf("Error al conectar a RabbitMQ: %s", err)
-    }
+conn, err := amqp.Dial(urlRabbit)
+if err != nil {
+    log.Fatalf("Error al conectar a RabbitMQ: %s", err)
+}
+
     defer conn.Close()
 
     ch, err := conn.Channel()
@@ -30,7 +37,7 @@ func main() {
     }
     defer ch.Close()
 
-    humidityMsgs, err := utils.SetupConsumer(ch, "hum")
+    humidityMsgs, err := utils.SetupConsumer(ch, "humidity")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de humedad: %s", err)
     }
@@ -41,12 +48,12 @@ func main() {
     }
 
 
-    temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "tAm")
+    temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "tempAm")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de luz: %s", err)
     }
 
-	temperaturePatientMsgs, err := utils.SetupConsumer(ch, "tPat")
+	temperaturePatientMsgs, err := utils.SetupConsumer(ch, "tempPat")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de luz: %s", err)
     }

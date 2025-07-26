@@ -18,7 +18,7 @@ func ProcessAlcoholMessages(token string, urlApi string,msgs <-chan amqp.Deliver
             log.Printf("Error al parsear JSON: %s", err)
             continue
         }
-temperature := data.SensorDataCheck{
+alcohol := data.SensorDataCheck{
     MeasurementUnit:      rawData["measurementUnit"].(string),
     NameSensor:           rawData["nameSensor"].(string),
     Information:          rawData["information"].(string),
@@ -26,13 +26,13 @@ temperature := data.SensorDataCheck{
 }
 
 
-        standardizedJSON, err := json.Marshal(temperature)
+        standardizedJSON, err := json.Marshal(alcohol)
         if err != nil {
             log.Printf("Error al crear JSON estandarizado: %s", err)
             continue
         }
 
-        if err := utils.SendToAPI(token,urlApi ,standardizedJSON); err != nil {
+        if err := utils.SendToAPI(urlApi, token ,standardizedJSON); err != nil {
             log.Printf("Error al enviar datos a la API: %s", err)
         } else {
             log.Printf("Datos de humedad enviados exitosamente a la API: %s", standardizedJSON)
