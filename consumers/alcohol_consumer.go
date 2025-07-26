@@ -18,9 +18,13 @@ func ProcessAlcoholMessages(token string, urlApi string,msgs <-chan amqp.Deliver
             log.Printf("Error al parsear JSON: %s", err)
             continue
         }
+temperature := data.SensorDataCheck{
+    MeasurementUnit:      rawData["measurementUnit"].(string),
+    NameSensor:           rawData["nameSensor"].(string),
+    Information:          rawData["information"].(string),
+    UserCivilIDUserCivil: int(rawData["UserCivil_idUserCivil"].(float64)),
+}
 
-        temperature := data.SensorData{
-        }
 
         standardizedJSON, err := json.Marshal(temperature)
         if err != nil {
