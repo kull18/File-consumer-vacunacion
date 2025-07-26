@@ -33,7 +33,7 @@ func ProcessTemperatureAmbientalMessages(token string, urlApi string, msgs <-cha
 			continue
 		}
 
-		if err := utils.SendToAPI(token, urlApi, standardizedJSON); err != nil {
+		if err := utils.SendToAPI(urlApi,token, standardizedJSON); err != nil {
 			log.Printf("Error al enviar datos a la API: %s", err)
 		} else {
 			log.Printf("Datos de humedad enviados exitosamente a la API: %s", standardizedJSON)
