@@ -14,17 +14,19 @@ import (
 )
 
 func LogConsumer() (string, error) {
-	err := godotenv.Load()
+	err := godotenv.Load(".env") 
 	if err != nil {
 		log.Fatalf("Error al cargar el archivo .env: %v", err)
 	}
 
-	username := os.Getenv("USERNAME")
-	password := os.Getenv("PASSWORD")
+	username := os.Getenv("USERNAME_API")
+	password := os.Getenv("PASSWORD_API")
 
 	if username == "" || password == "" {
 		return "", fmt.Errorf("USERNAME o PASSWORD no definidos en el archivo .env")
 	}
+
+	fmt.Printf("username password %s , %s\n", username, password)
 
 	loginData := map[string]string{
 		"username": username,
@@ -36,7 +38,8 @@ func LogConsumer() (string, error) {
 		return "", fmt.Errorf("error al serializar los datos de login: %v", err)
 	}
 
-	apiURL := "http://localhost:8000/api/login/userMedicPersona"
+	apiURL := os.Getenv("URL_API_POST")
+
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("error al crear la solicitud HTTP: %v", err)
@@ -44,9 +47,7 @@ func LogConsumer() (string, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: time.Second * 10,
-	}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("error al hacer la solicitud: %v", err)

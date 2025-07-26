@@ -51,10 +51,13 @@ func main() {
         log.Fatalf("Error al configurar consumidor de luz: %s", err)
     }
 
-	urlApi1 := os.Getenv("URL_API_1")
 
-	urlApi2 := os.Getenv("URL_API_2")
+	//url para hacer peticiones
+
+	urlApi1 := os.Getenv("URL_API_1")  //api vacunas
+	urlApi2 := os.Getenv("URL_API_2") //api vacunacion
   
+
     go consumers.ProcessAlcoholMessages(token, urlApi2,alcoholMsgs)
 	go consumers.ProcessTemperaturePatientMessages(token, urlApi2,temperaturePatientMsgs)
 
