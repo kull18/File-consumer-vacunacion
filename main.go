@@ -30,23 +30,23 @@ func main() {
     }
     defer ch.Close()
 
-    humidityMsgs, err := utils.SetupConsumer(ch, "")
+    humidityMsgs, err := utils.SetupConsumer(ch, "hum")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de humedad: %s", err)
     }
 
-    alcoholMsgs, err := utils.SetupConsumer(ch, "")
+    alcoholMsgs, err := utils.SetupConsumer(ch, "alcohol")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de temperatura: %s", err)
     }
 
 
-    temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "")
+    temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "tAm")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de luz: %s", err)
     }
 
-	temperaturePatientMsgs, err := utils.SetupConsumer(ch, "")
+	temperaturePatientMsgs, err := utils.SetupConsumer(ch, "tPat")
     if err != nil {
         log.Fatalf("Error al configurar consumidor de luz: %s", err)
     }

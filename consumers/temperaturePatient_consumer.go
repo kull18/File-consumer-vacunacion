@@ -9,7 +9,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func ProcessTemperaturePatientMessages(token string, urlApi string,msgs <-chan amqp.Delivery) {
+func ProcessTemperaturePatientMessages(token string, urlApi string, msgs <-chan amqp.Delivery) {
     for d := range msgs {
         log.Printf("Recibido mensaje de humedad: %s", d.Body)
 
@@ -19,7 +19,11 @@ func ProcessTemperaturePatientMessages(token string, urlApi string,msgs <-chan a
             continue
         }
 
-        temperature := data.SensorData{
+        temperature := data.SensorDataCheck{
+            MeasurementUnit:      rawData["measurementUnit"].(string),
+            NameSensor:           rawData["nameSensor"].(string),
+            Information:          rawData["information"].(string),
+            UserCivilIDUserCivil: int(rawData["UserCivil_idUserCivil"].(float64)),
         }
 
         standardizedJSON, err := json.Marshal(temperature)
@@ -28,7 +32,7 @@ func ProcessTemperaturePatientMessages(token string, urlApi string,msgs <-chan a
             continue
         }
 
-        if err := utils.SendToAPI(token,urlApi ,standardizedJSON); err != nil {
+        if err := utils.SendToAPI(token, urlApi, standardizedJSON); err != nil {
             log.Printf("Error al enviar datos a la API: %s", err)
         } else {
             log.Printf("Datos de humedad enviados exitosamente a la API: %s", standardizedJSON)
