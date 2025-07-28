@@ -9,7 +9,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func ProcessTemperatureAmbientalMessages(token string, urlApi string, msgs <-chan amqp.Delivery) {
+func ProcessTemperatureHieleraMessages(token string, urlApi string, msgs <-chan amqp.Delivery) {
 	for d := range msgs {
 		log.Printf("Recibido mensaje de humedad: %s", d.Body)
 
@@ -19,7 +19,7 @@ func ProcessTemperatureAmbientalMessages(token string, urlApi string, msgs <-cha
 			continue
 		}
 
-		temperature := data.SensorDataVaccine{
+		temperatureHielera := data.SensorDataVaccine{
 			MeasurementUnit:  rawData["measurementUnit"].(string),
 			NameSensor:       rawData["nameSensor"].(string),
 			Information:      rawData["information"].(float64),
@@ -27,7 +27,7 @@ func ProcessTemperatureAmbientalMessages(token string, urlApi string, msgs <-cha
 			IDSensorsVaccine: int(rawData["idSensorsVaccine"].(float64)),
 		}
 
-		standardizedJSON, err := json.Marshal(temperature)
+		standardizedJSON, err := json.Marshal(temperatureHielera)
 		if err != nil {
 			log.Printf("Error al crear JSON estandarizado: %s", err)
 			continue

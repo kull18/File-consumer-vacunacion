@@ -22,7 +22,7 @@ func ProcessHumidityMessages(token string, urlApi string, msgs <-chan amqp.Deliv
         humidity := data.SensorDataVaccine{
             MeasurementUnit: rawData["measurementUnit"].(string),
             NameSensor:      rawData["nameSensor"].(string),
-            Information:     int(rawData["information"].(float64)),  // Asumiendo que es float64 y quieres int
+            Information:     rawData["information"].(float64),  // Asumiendo que es float64 y quieres int
             IDVaccineBox:    int(rawData["idVaccineBox"].(float64)),
             IDSensorsVaccine: int(rawData["idSensorsVaccine"].(float64)),
         }

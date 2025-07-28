@@ -1,79 +1,307 @@
 package main
 
 import (
-	"file-consumer/consumers"
-	"file-consumer/utils"
+	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand"
+	"net/url"
 	"os"
+	"sync"
+	"time"
 
+	"file-consumer/consumers"
+	"file-consumer/data"
+	"file-consumer/utils"
+
+	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func main() {
-
-	    err := godotenv.Load()
-    if err != nil {
-        log.Fatalf("Error cargando archivo .env: %v", err)
-    }
-    token, errToken := utils.LogConsumer()
-
-    if errToken != nil {
-        log.Fatalf("Error al generar token: %s", errToken)
-    }
-urlRabbit := os.Getenv("URLRabbitMq")
-log.Printf("URL RabbitMQ: %s", urlRabbit)
-
-conn, err := amqp.Dial(urlRabbit)
-if err != nil {
-    log.Fatalf("Error al conectar a RabbitMQ: %s", err)
+type FrecuenciaData struct {
+	Intervalos []string  `json:"intervalos"`
+	Marcas     []float64 `json:"marcas"`
+	FA         []int     `json:"fa"`
+	FR         []float64 `json:"fr"`
+	FAC        []int     `json:"fac"`
 }
 
-    defer conn.Close()
+var (
+	wsTempConn     *websocket.Conn
+	wsTempMutex    sync.Mutex
+	wsHumidityConn *websocket.Conn
+	wsHumMutex     sync.Mutex
 
-    ch, err := conn.Channel()
-    if err != nil {
-        log.Fatalf("Error al abrir canal RabbitMQ: %s", err)
-    }
-    defer ch.Close()
+	datos      []Hour
+	datosMutex sync.Mutex
+)
 
-    humidityMsgs, err := utils.SetupConsumer(ch, "humidity")
-    if err != nil {
-        log.Fatalf("Error al configurar consumidor de humedad: %s", err)
-    }
+type Hour struct {
+	Valor float64
+	Hora  string
+	Type  string
+}
 
-    alcoholMsgs, err := utils.SetupConsumer(ch, "alcohol")
-    if err != nil {
-        log.Fatalf("Error al configurar consumidor de temperatura: %s", err)
-    }
+func connectWebSocket(path string) (*websocket.Conn, error) {
+	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: path}
+	log.Printf("Conectando a WebSocket %s", u.String())
 
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
 
-    temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "tempAm")
-    if err != nil {
-        log.Fatalf("Error al configurar consumidor de luz: %s", err)
-    }
+func reconnectWebSocket(path string, mutex *sync.Mutex, conn **websocket.Conn) error {
+	const maxAttempts = 5
+	for i := 0; i < maxAttempts; i++ {
+		c, err := connectWebSocket(path)
+		if err == nil {
+			mutex.Lock()
+			if *conn != nil {
+				(*conn).Close()
+			}
+			*conn = c
+			mutex.Unlock()
+			log.Printf("Reconectado a WebSocket %s", path)
+			return nil
+		}
+		log.Printf("Error reconectando WS %s (intento %d): %v", path, i+1, err)
+		time.Sleep(time.Second * time.Duration(2<<i)) // backoff exponencial
+	}
+	return fmt.Errorf("no se pudo reconectar a WebSocket %s tras %d intentos", path, maxAttempts)
+}
+
+func sendToWebSocket(conn **websocket.Conn, mutex *sync.Mutex, path string, message []byte) error {
+	mutex.Lock()
+	c := *conn
+	mutex.Unlock()
+
+	if c == nil {
+		if err := reconnectWebSocket(path, mutex, conn); err != nil {
+			return err
+		}
+		mutex.Lock()
+		c = *conn
+		mutex.Unlock()
+	}
+
+	err := c.WriteMessage(websocket.TextMessage, message)
+	if err != nil {
+		log.Printf("Error enviando mensaje WS en %s: %v. Intentando reconectar...", path, err)
+		if err := reconnectWebSocket(path, mutex, conn); err != nil {
+			return err
+		}
+		mutex.Lock()
+		c = *conn
+		mutex.Unlock()
+		return c.WriteMessage(websocket.TextMessage, message)
+	}
+
+	return nil
+}
+
+func frequencyTable(datos []Hour) map[string]FrecuenciaData {
+	resultados := make(map[string]FrecuenciaData)
+	if len(datos) == 0 {
+		return resultados
+	}
+
+	tipos := map[string]bool{}
+	for _, d := range datos {
+		tipos[d.Type] = true
+	}
+
+	for tipo := range tipos {
+		vals := []float64{}
+		for _, d := range datos {
+			if d.Type == tipo {
+				vals = append(vals, d.Valor)
+			}
+		}
+
+		n := len(vals)
+		if n == 0 {
+			continue
+		}
+
+		intervalos := make([]string, n)
+		fa := make([]int, n)
+		fr := make([]float64, n)
+		fac := make([]int, n)
+		marcas := make([]float64, n)
+
+		total := float64(n)
+		acumulada := 0
+
+		for i, v := range vals {
+			intervalos[i] = fmt.Sprintf("%.2f", v)
+			marcas[i] = v
+			fa[i] = 1
+			fr[i] = 100.0 / total
+			acumulada++
+			fac[i] = acumulada
+		}
+
+		resultados[tipo] = FrecuenciaData{
+			Intervalos: intervalos,
+			FA:         fa,
+			FR:         fr,
+			FAC:        fac,
+			Marcas:     marcas,
+		}
+	}
+
+	return resultados
+}
+
+func startPeriodicSender(tipo string, conn **websocket.Conn, mutex *sync.Mutex, path string, intervalo time.Duration) {
+	go func() {
+		for {
+			time.Sleep(intervalo)
+
+			datosMutex.Lock()
+			copia := make([]Hour, len(datos))
+			copy(copia, datos)
+			datosMutex.Unlock()
+
+			frec := frequencyTable(copia)
+			if data, ok := frec[tipo]; ok {
+				jsonData, err := json.Marshal(map[string]FrecuenciaData{tipo: data})
+				if err != nil {
+					log.Println("Error serializando datos de frecuencia:", err)
+					continue
+				}
+
+				if err := sendToWebSocket(conn, mutex, path, jsonData); err != nil {
+					log.Printf("Error enviando datos de %s al WebSocket: %v", tipo, err)
+				}
+			}
+		}
+	}()
+}
+
+func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error cargando archivo .env: %v", err)
+	}
+
+	token, errToken := utils.LogConsumer()
+	if errToken != nil {
+		log.Fatalf("Error al generar token: %s", errToken)
+	}
+	urlRabbit := os.Getenv("URLRabbitMq")
+	log.Printf("URL RabbitMQ: %s", urlRabbit)
+
+	conn, err := amqp.Dial(urlRabbit)
+	if err != nil {
+		log.Fatalf("Error al conectar a RabbitMQ: %s", err)
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("Error al abrir canal RabbitMQ: %s", err)
+	}
+	defer ch.Close()
+
+	humidityMsgs, err := utils.SetupConsumer(ch, "humidity")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de humedad: %s", err)
+	}
+
+	alcoholMsgs, err := utils.SetupConsumer(ch, "alcohol")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de alcohol: %s", err)
+	}
+
+	temperatureAmbientalMsgs, err := utils.SetupConsumer(ch, "tempAm")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de temperatura ambiental: %s", err)
+	}
 
 	temperaturePatientMsgs, err := utils.SetupConsumer(ch, "tempPat")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de temperatura paciente: %s", err)
+	}
+
+    temperatureHieleraMsgs, err := utils.SetupConsumer(ch, "tempTp")
+
     if err != nil {
-        log.Fatalf("Error al configurar consumidor de luz: %s", err)
+  		log.Fatalf("Error al configurar consumidor de hielera %s", err)      
     }
 
+	urlApi1 := os.Getenv("URL_API_1")
+	urlApi2 := os.Getenv("URL_API_2")
 
-	//url para hacer peticiones
+	go consumers.ProcessAlcoholMessages(token, urlApi2, alcoholMsgs)
+	go consumers.ProcessTemperaturePatientMessages(token, urlApi2, temperaturePatientMsgs)
+	go consumers.ProcessHumidityMessages(token, urlApi1, humidityMsgs)
+	go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1, temperatureAmbientalMsgs)
+    go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
 
-	urlApi1 := os.Getenv("URL_API_1")  //api vacunas
-	urlApi2 := os.Getenv("URL_API_2") //api vacunacion
-  
+	wsTempConn, err = connectWebSocket("/ws/temperature-stats")
+	if err != nil {
+		log.Fatalf("Error conectando a WebSocket temperatura: %v", err)
+	}
+	defer wsTempConn.Close()
 
-    go consumers.ProcessAlcoholMessages(token, urlApi2,alcoholMsgs)
-	go consumers.ProcessTemperaturePatientMessages(token, urlApi2,temperaturePatientMsgs)
+	wsHumidityConn, err = connectWebSocket("/ws/humidity-stats")
+	if err != nil {
+		log.Fatalf("Error conectando a WebSocket humedad: %v", err)
+	}
+	defer wsHumidityConn.Close()
 
+	rand.Seed(time.Now().UnixNano()) // Inicializar semilla para variación
 
-    go consumers.ProcessHumidityMessages(token, urlApi1, humidityMsgs)
-    go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1 ,temperatureAmbientalMsgs)
+	// Acumular datos de temperatura ambiental con variación y segundos
+	go func() {
+		for msg := range temperatureHieleraMsgs {
+			var sensor data.SensorDataVaccine
+			if err := json.Unmarshal(msg.Body, &sensor); err != nil {
+				log.Println("Error al deserializar temperatura ambiental:", err)
+				continue
+			}
 
+			valor := float64(sensor.Information) + (rand.Float64()*2 - 1) // +-1 variación
 
-    log.Println("Esperando mensajes. Presiona CTRL+C para salir.")
-    var forever chan struct{}
-    <-forever
+			datosMutex.Lock()
+			datos = append(datos, Hour{
+				Valor: valor,
+				Hora:  time.Now().Format("15:04:05"), // incluye segundos para variar clave
+				Type:  "temperature",
+			})
+			datosMutex.Unlock()
+		}
+	}()
+
+	// Acumular datos de humedad con variación y segundos
+	go func() {
+		for msg := range humidityMsgs {
+			var sensor data.SensorDataVaccine
+			if err := json.Unmarshal(msg.Body, &sensor); err != nil {
+				log.Println("Error al deserializar humedad:", err)
+				continue
+			}
+
+			valor := float64(sensor.Information) + (rand.Float64()*2 - 1) // +-1 variación
+
+			datosMutex.Lock()
+			datos = append(datos, Hour{
+				Valor: valor,
+				Hora:  time.Now().Format("15:04:05"),
+				Type:  "humidity",
+			})
+			datosMutex.Unlock()
+		}
+	}()
+
+	startPeriodicSender("temperature", &wsTempConn, &wsTempMutex, "/ws/temperature-stats", 10*time.Second)
+	startPeriodicSender("humidity", &wsHumidityConn, &wsHumMutex, "/ws/humidity-stats", 10*time.Second)
+
+	log.Println("Esperando mensajes. Presiona CTRL+C para salir.")
+	select {}
 }
