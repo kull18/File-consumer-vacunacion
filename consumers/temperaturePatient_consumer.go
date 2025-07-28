@@ -22,7 +22,7 @@ func ProcessTemperaturePatientMessages(token string, urlApi string, msgs <-chan 
         temperature := data.SensorDataCheck{
             MeasurementUnit:      rawData["measurementUnit"].(string),
             NameSensor:           rawData["nameSensor"].(string),
-            Information:          rawData["information"].(string),
+            Information:          rawData["information"].(float64),
             UserCivilIDUserCivil: int(rawData["UserCivil_idUserCivil"].(float64)),
         }
 

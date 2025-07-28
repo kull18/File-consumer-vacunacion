@@ -21,7 +21,7 @@ func ProcessAlcoholMessages(token string, urlApi string,msgs <-chan amqp.Deliver
 alcohol := data.SensorDataCheck{
     MeasurementUnit:      rawData["measurementUnit"].(string),
     NameSensor:           rawData["nameSensor"].(string),
-    Information:          rawData["information"].(string),
+    Information:          rawData["information"].(float64),
     UserCivilIDUserCivil: int(rawData["UserCivil_idUserCivil"].(float64)),
 }
 
