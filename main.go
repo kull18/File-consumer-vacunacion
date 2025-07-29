@@ -47,7 +47,7 @@ var (
 )
 
 func connectWebSocket(path string) (*websocket.Conn, error) {
-	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: path}
+	u := url.URL{Scheme: "ws", Host: "98.85.230.138:8080", Path: path}
 	log.Printf("Conectando a WebSocket %s", u.String())
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
