@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
     _ "github.com/go-sql-driver/mysql"
 	"encoding/json"
 	"fmt"
@@ -48,7 +47,7 @@ var (
 )
 
 func connectWebSocket(path string) (*websocket.Conn, error) {
-	u := url.URL{Scheme: "ws", Host: "98.85.230.138:8080", Path: path}
+	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: path}
 	log.Printf("Conectando a WebSocket %s", u.String())
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
@@ -242,6 +241,8 @@ func main() {
 		log.Fatalf("Error al configurar consumidor de userCivil: %s", err)
 	}
 
+    fmt.Printf("message %s", userCivilMsgs)
+
 	urlApi1 := os.Getenv("URL_API_1")
 	urlApi2 := os.Getenv("URL_API_2")
 
@@ -251,22 +252,6 @@ func main() {
 	go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1, temperatureAmbientalMsgs)
 	go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
 
-    	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	dbname := os.Getenv("DB_NAME")
-
-	passwordEscaped := url.QueryEscape(password)
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, passwordEscaped, host, port, dbname)
-	log.Println("DSN usado:", dsn)
-
-
-    db, err := sql.Open("mysql", dsn) 
-	if err != nil {
-		log.Fatalf("Error conectando a la base de datos: %v", err)
-	}
-	defer db.Close()
 
 	wsTempConn, err = connectWebSocket("/ws/temperature-stats")
 	if err != nil {
@@ -329,6 +314,7 @@ func main() {
 	// Nuevo consumidor de userCivil
 	go func() {
 		for msg := range userCivilMsgs {
+ 
 			var input data.UserCivil
 			if err := json.Unmarshal(msg.Body, &input); err != nil {
 				log.Println("Error al deserializar UserCivil:", err)
@@ -336,7 +322,7 @@ func main() {
 			}
 
 			// Generar folio único
-			folio, err := utils.GenerateFolio(db)
+			folio := utils.GenerateRandomFolio(8)
 			if err != nil {
 				log.Println("Error generando folio:", err)
 				continue
@@ -347,6 +333,9 @@ func main() {
 				CorporalTemperature: input.CorporalTemperature,
 				AlcoholBreat:        input.AlcoholBreat,
 			}
+
+fmt.Printf("message %+v\n", userCivilFormat)
+
 
 			jsonData, err := json.Marshal(userCivilFormat)
 			if err != nil {
