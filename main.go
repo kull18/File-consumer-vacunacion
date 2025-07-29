@@ -251,13 +251,23 @@ func main() {
 	go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1, temperatureAmbientalMsgs)
 	go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
 
-    db, err := sql.Open("mysql", os.Getenv("SQLALCHEMY_DATABASE_URL")) // ejemplo: user:pass@tcp(localhost:3306)/dbname
+    	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	dbname := os.Getenv("DB_NAME")
+
+	passwordEscaped := url.QueryEscape(password)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, passwordEscaped, host, port, dbname)
+	log.Println("DSN usado:", dsn)
+
+
+    db, err := sql.Open("mysql", dsn) 
 	if err != nil {
 		log.Fatalf("Error conectando a la base de datos: %v", err)
 	}
 	defer db.Close()
 
-	// WebSocket Connections
 	wsTempConn, err = connectWebSocket("/ws/temperature-stats")
 	if err != nil {
 		log.Fatalf("Error conectando a WebSocket temperatura: %v", err)
@@ -276,7 +286,6 @@ func main() {
 	}
 	defer wsUserCivilConn.Close()
 
-	// Acumulación de datos para frecuencia
 	rand.Seed(time.Now().UnixNano())
 
 	go func() {
