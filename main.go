@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -249,6 +250,12 @@ func main() {
 	go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1, temperatureAmbientalMsgs)
 	go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
 
+    db, err := sql.Open("mysql", os.Getenv("SQLALCHEMY_DATABASE_URL")) // ejemplo: user:pass@tcp(localhost:3306)/dbname
+	if err != nil {
+		log.Fatalf("Error conectando a la base de datos: %v", err)
+	}
+	defer db.Close()
+
 	// WebSocket Connections
 	wsTempConn, err = connectWebSocket("/ws/temperature-stats")
 	if err != nil {
@@ -310,31 +317,38 @@ func main() {
 	}()
 
 	// Nuevo consumidor de userCivil
-go func() {
-	for msg := range userCivilMsgs {
-		var input data.UserCivil
-		if err := json.Unmarshal(msg.Body, &input); err != nil {
-			log.Println("Error al deserializar UserCivil:", err)
-			continue
-		}
+	go func() {
+		for msg := range userCivilMsgs {
+			var input data.UserCivil
+			if err := json.Unmarshal(msg.Body, &input); err != nil {
+				log.Println("Error al deserializar UserCivil:", err)
+				continue
+			}
 
-		userCivilFormat := data.UserCivilFormat{
-			Fol:                 utils.GenerateFolio(),
-			CorporalTemperature: input.CorporalTemperature,
-			AlcoholBreat:        input.AlcoholBreat,
-		}
+			// Generar folio único
+			folio, err := utils.GenerateFolio(db)
+			if err != nil {
+				log.Println("Error generando folio:", err)
+				continue
+			}
 
-		jsonData, err := json.Marshal(userCivilFormat)
-		if err != nil {
-			log.Println("Error serializando UserCivil:", err)
-			continue
-		}
+			userCivilFormat := data.UserCivilFormat{
+				Fol:                 folio,
+				CorporalTemperature: input.CorporalTemperature,
+				AlcoholBreat:        input.AlcoholBreat,
+			}
 
-		if err := sendToWebSocket(&wsUserCivilConn, &wsUserCivilMutex, "/ws/usercivil-stats", jsonData); err != nil {
-			log.Printf("Error enviando datos de UserCivil al WebSocket: %v", err)
+			jsonData, err := json.Marshal(userCivilFormat)
+			if err != nil {
+				log.Println("Error serializando UserCivil:", err)
+				continue
+			}
+
+			if err := sendToWebSocket(&wsUserCivilConn, &wsUserCivilMutex, "/ws/usercivil-stats", jsonData); err != nil {
+				log.Printf("Error enviando datos de UserCivil al WebSocket: %v", err)
+			}
 		}
-	}
-}()
+	}()
 
 	startPeriodicSender("temperature", &wsTempConn, &wsTempMutex, "/ws/temperature-stats", 10*time.Second)
 	startPeriodicSender("humidity", &wsHumidityConn, &wsHumMutex, "/ws/humidity-stats", 10*time.Second)
