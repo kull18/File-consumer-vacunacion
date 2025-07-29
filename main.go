@@ -27,24 +27,26 @@ type FrecuenciaData struct {
 	FAC        []int     `json:"fac"`
 }
 
-var (
-	wsTempConn     *websocket.Conn
-	wsTempMutex    sync.Mutex
-	wsHumidityConn *websocket.Conn
-	wsHumMutex     sync.Mutex
-
-	datos      []Hour
-	datosMutex sync.Mutex
-)
-
 type Hour struct {
 	Valor float64
 	Hora  string
 	Type  string
 }
 
+var (
+	wsTempConn      *websocket.Conn
+	wsTempMutex     sync.Mutex
+	wsHumidityConn  *websocket.Conn
+	wsHumMutex      sync.Mutex
+	wsUserCivilConn *websocket.Conn
+	wsUserCivilMutex sync.Mutex
+
+	datos      []Hour
+	datosMutex sync.Mutex
+)
+
 func connectWebSocket(path string) (*websocket.Conn, error) {
-	u := url.URL{Scheme: "ws", Host: "98.85.230.138:8080", Path: path}
+	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: path}
 	log.Printf("Conectando a WebSocket %s", u.String())
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
@@ -69,7 +71,7 @@ func reconnectWebSocket(path string, mutex *sync.Mutex, conn **websocket.Conn) e
 			return nil
 		}
 		log.Printf("Error reconectando WS %s (intento %d): %v", path, i+1, err)
-		time.Sleep(time.Second * time.Duration(2<<i)) // backoff exponencial
+		time.Sleep(time.Second * time.Duration(2<<i))
 	}
 	return fmt.Errorf("no se pudo reconectar a WebSocket %s tras %d intentos", path, maxAttempts)
 }
@@ -228,11 +230,15 @@ func main() {
 		log.Fatalf("Error al configurar consumidor de temperatura paciente: %s", err)
 	}
 
-    temperatureHieleraMsgs, err := utils.SetupConsumer(ch, "tempTp")
+	temperatureHieleraMsgs, err := utils.SetupConsumer(ch, "tempTp")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de hielera: %s", err)
+	}
 
-    if err != nil {
-  		log.Fatalf("Error al configurar consumidor de hielera %s", err)      
-    }
+	userCivilMsgs, err := utils.SetupConsumer(ch, "userCivil")
+	if err != nil {
+		log.Fatalf("Error al configurar consumidor de userCivil: %s", err)
+	}
 
 	urlApi1 := os.Getenv("URL_API_1")
 	urlApi2 := os.Getenv("URL_API_2")
@@ -241,8 +247,9 @@ func main() {
 	go consumers.ProcessTemperaturePatientMessages(token, urlApi2, temperaturePatientMsgs)
 	go consumers.ProcessHumidityMessages(token, urlApi1, humidityMsgs)
 	go consumers.ProcessTemperatureAmbientalMessages(token, urlApi1, temperatureAmbientalMsgs)
-    go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
+	go consumers.ProcessTemperatureHieleraMessages(token, urlApi1, temperatureHieleraMsgs)
 
+	// WebSocket Connections
 	wsTempConn, err = connectWebSocket("/ws/temperature-stats")
 	if err != nil {
 		log.Fatalf("Error conectando a WebSocket temperatura: %v", err)
@@ -255,30 +262,34 @@ func main() {
 	}
 	defer wsHumidityConn.Close()
 
-	rand.Seed(time.Now().UnixNano()) // Inicializar semilla para variación
+	wsUserCivilConn, err = connectWebSocket("/ws/usercivil-stats")
+	if err != nil {
+		log.Fatalf("Error conectando a WebSocket UserCivil: %v", err)
+	}
+	defer wsUserCivilConn.Close()
 
-	// Acumular datos de temperatura ambiental con variación y segundos
+	// Acumulación de datos para frecuencia
+	rand.Seed(time.Now().UnixNano())
+
 	go func() {
 		for msg := range temperatureHieleraMsgs {
 			var sensor data.SensorDataVaccine
 			if err := json.Unmarshal(msg.Body, &sensor); err != nil {
-				log.Println("Error al deserializar temperatura ambiental:", err)
+				log.Println("Error al deserializar temperatura hielera:", err)
 				continue
 			}
 
-			valor := float64(sensor.Information) + (rand.Float64()*2 - 1) // +-1 variación
-
+			valor := float64(sensor.Information) + (rand.Float64()*2 - 1)
 			datosMutex.Lock()
 			datos = append(datos, Hour{
 				Valor: valor,
-				Hora:  time.Now().Format("15:04:05"), // incluye segundos para variar clave
+				Hora:  time.Now().Format("15:04:05"),
 				Type:  "temperature",
 			})
 			datosMutex.Unlock()
 		}
 	}()
 
-	// Acumular datos de humedad con variación y segundos
 	go func() {
 		for msg := range humidityMsgs {
 			var sensor data.SensorDataVaccine
@@ -287,8 +298,7 @@ func main() {
 				continue
 			}
 
-			valor := float64(sensor.Information) + (rand.Float64()*2 - 1) // +-1 variación
-
+			valor := float64(sensor.Information) + (rand.Float64()*2 - 1)
 			datosMutex.Lock()
 			datos = append(datos, Hour{
 				Valor: valor,
@@ -298,6 +308,33 @@ func main() {
 			datosMutex.Unlock()
 		}
 	}()
+
+	// Nuevo consumidor de userCivil
+go func() {
+	for msg := range userCivilMsgs {
+		var input data.UserCivil
+		if err := json.Unmarshal(msg.Body, &input); err != nil {
+			log.Println("Error al deserializar UserCivil:", err)
+			continue
+		}
+
+		userCivilFormat := data.UserCivilFormat{
+			Fol:                 utils.GenerateFolio(),
+			CorporalTemperature: input.CorporalTemperature,
+			AlcoholBreat:        input.AlcoholBreat,
+		}
+
+		jsonData, err := json.Marshal(userCivilFormat)
+		if err != nil {
+			log.Println("Error serializando UserCivil:", err)
+			continue
+		}
+
+		if err := sendToWebSocket(&wsUserCivilConn, &wsUserCivilMutex, "/ws/usercivil-stats", jsonData); err != nil {
+			log.Printf("Error enviando datos de UserCivil al WebSocket: %v", err)
+		}
+	}
+}()
 
 	startPeriodicSender("temperature", &wsTempConn, &wsTempMutex, "/ws/temperature-stats", 10*time.Second)
 	startPeriodicSender("humidity", &wsHumidityConn, &wsHumMutex, "/ws/humidity-stats", 10*time.Second)

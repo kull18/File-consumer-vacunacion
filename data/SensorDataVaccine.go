@@ -1,6 +1,5 @@
 package data
 
-
 type SensorDataVaccine struct {
 	MeasurementUnit   string `json:"measurementUnit"`
 	NameSensor        string `json:"nameSensor"`
